@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0b1120" />
+  <title>MarmaraDavinci V2</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="wsDot"></span>
+      <div class="brand-text">
+        <strong>MarmaraDavinci</strong>
+        <span class="ver-pill">V2.0</span>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge" id="offlineBadge">Model hazırlanıyor...</span>
+      <span class="badge" id="wsBadge">ESP32: Bağlı Değil</span>
+      <span class="badge" id="rttBadge">RTT: —</span>
+      <button id="btnEstop" class="btn-estop" title="Acil Durdur (Boşluk Tuşu)">ACİL DURDUR</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="cameraTab">Çift El Kontrolü</button>
+    <button class="tab" data-tab="pidTab">PID Analizi & Ayar</button>
+    <button class="tab" data-tab="manualTab">Bağlantı & Kalibrasyon</button>
+  </nav>
+
+  <main>
+    <!-- SEKME 1: ÇİFT EL KAMERA KONTROLÜ -->
+    <section id="cameraTab" class="panel active">
+      <div class="camera-layout">
+        <div class="camera-col">
+          <div class="video-wrap mirrored" id="videoWrap">
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="overlay"></canvas>
+            <div class="hud-top">
+              <span id="handStatus" class="pill warn">Eller bekleniyor</span>
+              <span id="fpsLabel" class="pill">0 FPS</span>
+            </div>
+          </div>
+
+          <div class="controls-row">
+            <button id="btnStartCam" class="btn primary">Kamerayı Başlat</button>
+            <button id="btnFlipCam" class="btn">Kamera Çevir</button>
+            <button id="btnZeroRef" class="btn">Şimdiyi 0° Say</button>
+            <button id="btnHoldActive" class="btn danger-outline">Motorlar Kilitli (Basılı Tut / Aç)</button>
+          </div>
+
+          <div class="toggle-row">
+            <label><input type="checkbox" id="chkLatchMode" /> Kilidi aç/kapa (toggle)</label>
+            <label><input type="checkbox" id="chkSwapHands" /> Sol / Sağ el ters</label>
+            <label><input type="checkbox" id="chkMirrorView" checked /> Görüntüyü aynala</label>
+          </div>
+
+          <div class="card sliders">
+            <label>
+              <span class="slider-head"><span>Yumuşatma (EMA)</span><strong id="lblAlpha">0.25</strong></span>
+              <input type="range" id="rngAlpha" min="0.05" max="0.8" step="0.05" value="0.25" />
+            </label>
+            <label>
+              <span class="slider-head"><span>Ölü Bölge (Deadband)</span><strong id="lblDeadband">1.5°</strong></span>
+              <input type="range" id="rngDeadband" min="0" max="6" step="0.5" value="1.5" />
+            </label>
+            <label>
+              <span class="slider-head"><span>Hız Sınırı (Slew-Rate)</span><strong id="lblSlew">240°/sn</strong></span>
+              <input type="range" id="rngSlew" min="30" max="600" step="30" value="240" />
+            </label>
+          </div>
+        </div>
+
+        <div class="hands-col">
+          <div class="card hand-card left-accent">
+            <h3>Sol El (L1–L4) <span class="mini-status" id="leftHandBadge">Yok</span> <span class="mini-status" id="wsLeftStatus">ESP32-L: Kapalı</span></h3>
+            <div class="gauges-4">
+              <div class="gauge"><span>L1 Başparmak (-)</span><strong id="valL1">0°</strong></div>
+              <div class="gauge"><span>L2 İşaret (+)</span><strong id="valL2">0°</strong></div>
+              <div class="gauge"><span>L3 Kendi Etrafında</span><strong id="valL3">0°</strong></div>
+              <div class="gauge"><span>L4 Bilek Sağa/Sol</span><strong id="valL4">0°</strong></div>
+            </div>
+          </div>
+
+          <div class="card hand-card right-accent">
+            <h3>Sağ El (R1–R4) <span class="mini-status" id="rightHandBadge">Yok</span> <span class="mini-status" id="wsRightStatus">ESP32-R: Kapalı</span></h3>
+            <div class="gauges-4">
+              <div class="gauge"><span>R1 Başparmak (-)</span><strong id="valR1">0°</strong></div>
+              <div class="gauge"><span>R2 İşaret (+)</span><strong id="valR2">0°</strong></div>
+              <div class="gauge"><span>R3 Kendi Etrafında</span><strong id="valR3">0°</strong></div>
+              <div class="gauge"><span>R4 Bilek Sağa/Sol</span><strong id="valR4">0°</strong></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SEKME 2: PID ANALİZİ VE AYAR -->
+    <section id="pidTab" class="panel">
+      <div class="card">
+        <div class="pid-header">
+          <h3>Canlı PID Analizi (±180°)</h3>
+          <div class="pid-header-right">
+            <label class="inline-chk sim-pill"><input type="checkbox" id="chkSimMode" /> Simülatör (Demo)</label>
+            <select id="pidMotorSelect">
+              <option value="0">L1 - Sol Başparmak</option>
+              <option value="1">L2 - Sol İşaret</option>
+              <option value="2">L3 - Sol Kendi Etrafında</option>
+              <option value="3">L4 - Sol Bilek Sağa/Sol</option>
+              <option value="4">R1 - Sağ Başparmak</option>
+              <option value="5">R2 - Sağ İşaret</option>
+              <option value="6">R3 - Sağ Kendi Etrafında</option>
+              <option value="7">R4 - Sağ Bilek Sağa/Sol</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="pid-metrics pid-6">
+          <div class="gauge"><span>Hedef (SP)</span><strong id="pidSp">0.0°</strong></div>
+          <div class="gauge"><span>Gerçek (Enc)</span><strong id="pidAct">0.0°</strong></div>
+          <div class="gauge"><span>Hata</span><strong id="pidErr">0.0°</strong></div>
+          <div class="gauge"><span>Aşım (OS)</span><strong id="pidOs">0.0%</strong></div>
+          <div class="gauge"><span>Yükselme</span><strong id="pidRise">—</strong></div>
+          <div class="gauge"><span>Yerleşme</span><strong id="pidSettle">—</strong></div>
+        </div>
+
+        <div class="chart-wrap">
+          <canvas id="pidChart"></canvas>
+        </div>
+        <div class="legend">
+          <span class="leg sp">━ Hedef (SP)</span>
+          <span class="leg act">━ Gerçek (Enc)</span>
+          <span class="leg err">━ Hata</span>
+          <span class="leg out">━ PWM Çıkış</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>PID Parametreleri ve Step Testi</h3>
+        <div class="pid-inputs pid-inputs-5">
+          <label>Kp (Oransal)<input type="number" id="inpKp" step="0.1" value="2.8" /></label>
+          <label>Ki (İntegral)<input type="number" id="inpKi" step="0.01" value="0.06" /></label>
+          <label>Kd (Türev)<input type="number" id="inpKd" step="0.01" value="0.14" /></label>
+          <label>Min PWM (Ölü)<input type="number" id="inpMinPwm" step="5" min="0" max="120" value="35" /></label>
+          <label>Max PWM<input type="number" id="inpMaxPwm" step="5" min="30" max="255" value="210" /></label>
+        </div>
+        <div class="controls-row">
+          <button id="btnApplyPidOne" class="btn primary">Seçili Motora Uygula</button>
+          <button id="btnApplyPidAll" class="btn">8 Motora Uygula</button>
+          <button id="btnSaveFlash" class="btn">ESP32 Flash'a Kaydet</button>
+          <button id="btnStepTest" class="btn danger-outline">Step (+30°)</button>
+          <button id="btnStepTestNeg" class="btn danger-outline">Step (-30°)</button>
+          <button id="btnExportCsv" class="btn">CSV İndir</button>
+          <button id="btnClearPlot" class="btn">Temizle</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SEKME 3: BAĞLANTI, MANUEL VE KALİBRASYON -->
+    <section id="manualTab" class="panel">
+      <div class="card">
+        <h3>ESP32 Bağlantı Mimarisi (Tek veya Çift ESP32)</h3>
+        <div class="toggle-row" style="margin-bottom:10px">
+          <label><input type="checkbox" id="chkDualEsp" /> Çift ESP32 Modu (Sol Kol 4 Motor + Sağ Kol 4 Motor)</label>
+          <label><input type="checkbox" id="chkAutoReconnect" checked /> Bağlantı koparsa otomatik yeniden bağlan</label>
+        </div>
+
+        <div class="hands-grid">
+          <div>
+            <label class="field-label">Sol / Ana ESP32 (L1–L4 veya 8 Motor)
+              <input type="text" id="wsUrlLeft" value="wss://192.168.4.1/ws" />
+            </label>
+          </div>
+          <div id="rightEspWrap" style="display:none">
+            <label class="field-label">Sağ ESP32 (R1–R4)
+              <input type="text" id="wsUrlRight" value="wss://192.168.4.2/ws" />
+            </label>
+          </div>
+        </div>
+
+        <div class="controls-row">
+          <button id="btnConnectWs" class="btn primary">ESP32'ye Bağlan</button>
+          <button id="btnTrustCert" class="btn">İlk Bağlantı / Sertifika Onayla</button>
+        </div>
+        <p class="hint">
+          Yeni bir cihazla ilk kez bağlanıyorsan önce <strong>İlk Bağlantı / Sertifika Onayla</strong> butonuna basıp açılan sayfada <em>Gelişmiş → Devam et</em> de, ardından buraya dönüp bağlan.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>Eksen Yönü (Tersle) ve Çarpan (Gain) Kalibrasyonu</h3>
+        <p class="hint">Tendon disklerinizde yön tersse <strong>Ters</strong> kutusunu işaretleyin; dişli oranına göre çarpanı ayarlayın (tarayıcıda otomatik saklanır).</p>
+        <div id="calibContainer" class="calib-grid"></div>
+      </div>
+
+      <div class="card">
+        <h3>8 Motor Manuel Derece Kontrolü (±180°)</h3>
+        <div class="hands-grid">
+          <div class="manual-sliders">
+            <strong>Sol El (L1–L4)</strong>
+            <label><span class="slider-head"><span>L1 Başparmak</span><strong id="manLbl0">0°</strong></span><input type="range" class="man-range" data-idx="0" min="-180" max="180" value="0" /></label>
+            <label><span class="slider-head"><span>L2 İşaret</span><strong id="manLbl1">0°</strong></span><input type="range" class="man-range" data-idx="1" min="-180" max="180" value="0" /></label>
+            <label><span class="slider-head"><span>L3 Kendi Etrafında</span><strong id="manLbl2">0°</strong></span><input type="range" class="man-range" data-idx="2" min="-180" max="180" value="0" /></label>
+            <label><span class="slider-head"><span>L4 Bilek Sağa/Sol</span><strong id="manLbl3">0°</strong></span><input type="range" class="man-range" data-idx="3" min="-180" max="180" value="0" /></label>
+          </div>
+          <div class="manual-sliders">
+            <strong>Sağ El (R1–R4)</strong>
+            <label><span class="slider-head"><span>R1 Başparmak</span><strong id="manLbl4">0°</strong></span><input type="range" class="man-range" data-idx="4" min="-180" max="180" value="0" /></label>
+            <label><span class="slider-head"><span>R2 İşaret</span><strong id="manLbl5">0°</strong></span><input type="range" class="man-range" data-idx="5" min="-180" max="180" value="0" /></label>
+            <label><span class="slider-head"><span>R3 Kendi Etrafında</span><strong id="manLbl6">0°</strong></span><input type="range" class="man-range" data-idx="6" min="-180" max="180" value="0" /></label>
+            <label><span class="slider-head"><span>R4 Bilek Sağa/Sol</span><strong id="manLbl7">0°</strong></span><input type="range" class="man-range" data-idx="7" min="-180" max="180" value="0" /></label>
+          </div>
+        </div>
+        <div class="controls-row">
+          <button id="btnSendManual" class="btn primary">8 Motor Açısını Gönder</button>
+          <button id="btnCenterAll" class="btn">Hepsini 0° Sıfırla</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
